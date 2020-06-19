@@ -35,6 +35,22 @@ def rotationalinertia(atoms, indices=slice(None, None)):
     I = np.linalg.eigvals(I_)
     return I
 
+def hind_inertia(atoms, fix_atom, indices=slice(None, None)):
+    atoms = atoms[indices]
+    atom_mass = atoms.get_masses()
+
+    x_fix, y_fix, z_fix =slab.positions[fix_atom]
+
+    [I_x, I_y]=[0,0]
+
+    for i in range(0,len(atom_mass)):
+        if i not in atoms.constraints[0].index:
+                x,y,z=atoms.positions[i]
+                I_x+=atom_mass[i]*(x-x_fix)*(x-x_fix)
+                I_y+=atom_mass[i]*(y-y_fix)*(y-y_fix)
+
+    I_red = (I_x + I_y)* units._amu * 10**-20
+    return I_red
 
 def campbellsellers_entropy(item, temperature, pressure):
     """
@@ -227,14 +243,27 @@ def advanced_entropy(item, temperature, pressure):
             # the height of the barrier is fed through item.barrier_height
             # the internal inertial tensor cannot be calculated by the code and must be fed through item.custom_moments
             #     I have an auxillary script that people can use for this, but it involves changing constraints in a non-automated way per rotor
-            moments_SI = moments * units._amu * 10**-20
+            I_red = hind_inertia(item.atoms, moments)
 
-            Q_rot = ( np.sqrt ( np.pi ) / symmetry) * ( ( 8.0*(np.pi)**2*moments_SI* units._k * temperature) /
-                (units._hplanck**2))**(0.5)
-            E_scale = barrier / ( 2 * units.kB * temperature )
+            rot_bar= barrier * units._e
+
+            rot_freq=(0.5/np.pi)*(0.5*symmetry**2*rot_bar/I_red)**0.5
+
+            r_r = rot_bar / (units._hplanck * rot_freq)
+            T_r = units._k * T / (units._hplanck * rot_freq)
+            r_T = r_r / T_r
+
+            qr_num = (np.pi * r_T * exp(-r_T) * exp(-1/T_r))**0.5 * (i0(r_T/2)) * exp(1.0/((2.0+16.0*r_r)*T_r))
+            qr_den = (1-exp(-1/T_r))
+
+            qr= qr_num / (qr_den)
+
+            #Q_rot = ( np.sqrt ( np.pi ) / symmetry) * ( ( 8.0*(np.pi)**2*moments_SI* units._k * temperature) /
+                #(units._hplanck**2))**(0.5)
+            #%E_scale = barrier / ( 2 * units.kB * temperature )
             # calculation of the hindered barrier requires some imaginary numbers
-            j_unit = 0+1j
-            Q_hind = np.real( Q_rot * np.exp(-E_scale) * jn( 0 , j_unit*E_scale ) )
+            #j_unit = 0+1j
+            #Q_hind = np.real( Q_rot * np.exp(-E_scale) * jn( 0 , j_unit*E_scale ) )
             S_tot += units.kB * ( np.log(Q_hind) )
 
         elif dof_type == 'rigid':
