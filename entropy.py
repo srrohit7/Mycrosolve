@@ -1,6 +1,6 @@
 import numpy as np
 from ase import units
-from scipy.special import jn
+from scipy.special import jn, i0, iv
 
 def rotationalinertia(atoms, indices=slice(None, None)):
     """Calculates the three principle moments of inertia for an ASE atoms
@@ -75,9 +75,9 @@ def harmonic_entropy(item, temperature, pressure):
         x = energy / kT
         S_v +=  - np.log(1-np.exp(-x))
     S_v *= units.kB
-    
+
     S += S_v
-    
+
     return S
 
 def idealgas_entropy(item, temperature, pressure):
@@ -103,12 +103,12 @@ def idealgas_entropy(item, temperature, pressure):
     mass = sum(item.atoms.get_masses()) * units._amu  # kg/molecule
     S_t = (2 * np.pi * mass * units._k *
            temperature / units._hplanck**2)**(3.0 / 2)
-    S_t *= units._k * temperature / pressure 
+    S_t *= units._k * temperature / pressure
     S_t = units.kB * (np.log(S_t) )
 
     S += S_t
-	
-	
+
+
     # Rotational entropy (term inside the log is in SI units).
     # We need to check if the frequency is imaginary. The reaction/species file should denote which frequencies had the string f/i
     if item.geometry == 'Monatomic':
@@ -129,11 +129,11 @@ def idealgas_entropy(item, temperature, pressure):
         S_r = units.kB * (np.log(S_r) )
     S += S_r
 
-    # Vibrational entropy	
+    # Vibrational entropy
     for x, energy in enumerate(vibrational_energies):
         if vibrational_imaginary[x] or vibrational_frequencies[x] < 20:
             vibrational_energies[x] = 2.47968e-03
-            vibrational_frequencies[x] = 20    
+            vibrational_frequencies[x] = 20
 
     kT = units.kB * temperature
     S_v = 0.
@@ -144,7 +144,7 @@ def idealgas_entropy(item, temperature, pressure):
     S += S_v
 
     return S
-    
+
 def rigidbody_entropy(item, temperature, pressure):
     if item.geometry == 'Nonlinear':
         vibrational_energies = item.vibrational_energies[:item.entropy_frequencies-2]
@@ -160,7 +160,7 @@ def rigidbody_entropy(item, temperature, pressure):
         if vibrational_imaginary[x] or vibrational_frequencies[x] < 20:
             vibrational_energies[x] = 2.47968e-03
             vibrational_frequencies[x] = 20
- 
+
     S = 0.0
 
     if item.geometry == 'Nonlinear':
@@ -180,14 +180,14 @@ def rigidbody_entropy(item, temperature, pressure):
     S += S_r
 
     kT = units.kB * temperature
-    
+
     S_v = 0.
-    
+
     for energy in vibrational_energies:
         x = energy / kT
         S_v += - np.log(1-np.exp(-x))
     S_v *= units.kB
-    
+
     S += S_v
 
     return S
@@ -199,7 +199,7 @@ def advanced_entropy(item, temperature, pressure):
                 (10.0**10)**2)  # kg m^2
 
     ad_args = item.entropy_args.get("AD", {})
-    none_list = [None] * item.entropy_frequencies 
+    none_list = [None] * item.entropy_frequencies
     ad_partition_function = ad_args.get("partition_function", none_list)
     ad_partial_mass = ad_args.get("partial_mass", none_list)
     ad_barrier = ad_args.get("barrier", none_list)
@@ -221,15 +221,15 @@ def advanced_entropy(item, temperature, pressure):
         moments = ad_moments[index]
         diffusion = ad_diffusion[index]
         symmetry = ad_symmetry[index]
-        
+
         if dof_type == 'rot':
             # 'Rot' specifies a mode corresponding to a hindered rotator. This requires additional inputs in the item file
             # the height of the barrier is fed through item.barrier_height
-            # the internal inertial tensor cannot be calculated by the code and must be fed through item.custom_moments 
+            # the internal inertial tensor cannot be calculated by the code and must be fed through item.custom_moments
             #     I have an auxillary script that people can use for this, but it involves changing constraints in a non-automated way per rotor
             moments_SI = moments * units._amu * 10**-20
-            
-            Q_rot = ( np.sqrt ( np.pi ) / symmetry) * ( ( 8.0*(np.pi)**2*moments_SI* units._k * temperature) / 
+
+            Q_rot = ( np.sqrt ( np.pi ) / symmetry) * ( ( 8.0*(np.pi)**2*moments_SI* units._k * temperature) /
                 (units._hplanck**2))**(0.5)
             E_scale = barrier / ( 2 * units.kB * temperature )
             # calculation of the hindered barrier requires some imaginary numbers
@@ -263,10 +263,25 @@ def advanced_entropy(item, temperature, pressure):
 
             L = diffusion * 1E-10
             kT = units._k * temperature
-            red_mass = partial_mass * units._amu #SI units                  
-            S_tmp = (2*np.pi*red_mass*kT*L**2/units._hplanck**2)**(1.0/2)
-            S_tot += units.kB* ( np.log(S_tmp) )
- 
+            red_mass = partial_mass * units._amu #SI units
+            T = temperature
+
+            trans_bar= barrier * units._e #assuming barrier is in eV
+
+            trans_freq=(trans_bar/(2* red_mass * L**2))**0.5
+            #print(trans_freq/(3*10**10))
+
+            r_x = trans_bar / (units._hplanck * trans_freq)
+            T_x = units._k * T / (units._hplanck * trans_freq)
+            r_T = r_x / T_x
+
+            q_num = np.pi * r_T * np.exp(-r_T) * np.exp(-1/T_x) * (i0(r_T/2))**2 * np.exp(2.0/((2.0+16.0*r_x)*T_x))
+            q_den = (1-np.exp(-1/T_x))**2
+
+            qtrans = (q_num / q_den)**0.5
+            #S_tmp = (2*np.pi*red_mass*kT*L**2/units._hplanck**2)**(1.0/2)
+            S_tot += units.kB* ( np.log(qtrans) )
+
             # mass = sum(item.atoms.get_masses()) * units._amu  # kg/molecule
             # mass_Ar = 6.6335209E-26 # FIX LATER
             # mystery_a = 1E-10 # I don't know what this is, will talk to Tej
@@ -275,16 +290,16 @@ def advanced_entropy(item, temperature, pressure):
             # kT = units.kB * temperature
             # S_tmp = ( 2 / 3 ) * ( 18.6 * R + R * np.log( mass / mass_Ar)**1.5 * (temperature / 298.15)**2.5)
             # E_scale = barrier / ( 2 * units.kB * temperature )
-            # vx =  ( ( ( barrier / units.J ) ) / (2 * mass * mystery_a**2  ) )**(1./2) 
-            # E_x = units._hplanck * vx / kT 
-            # print barrier    
+            # vx =  ( ( ( barrier / units.J ) ) / (2 * mass * mystery_a**2  ) )**(1./2)
+            # E_x = units._hplanck * vx / kT
+            # print barrier
             # print E_x
-            # #print E_x    
+            # #print E_x
             # j_unit = 0+1j
             # S_tmp += np.real( np.log( np.exp( -2. * E_scale) * jn( 0 , j_unit*E_scale )**2) )
             # print S_tmp
             # S_tmp += np.real( E_scale * ( 1. - jn( 1 , j_unit*E_scale ) / jn( 0 , j_unit*E_scale ) ) +
-            #     2 * np.log(E_x / np.exp(1.) ) + 
+            #     2 * np.log(E_x / np.exp(1.) ) +
             #     2 * ( np.exp(E_x) / (np.exp(E_x) - 1. ) - np.log(1. - np.exp(-E_x) ) ) )
             # print S_tmp
 
@@ -294,7 +309,7 @@ def advanced_entropy(item, temperature, pressure):
         else:
             kT = units.kB * temperature
             x = energy / kT
-            S_tot += units.kB * ( - np.log(1-np.exp(-x)) )  
+            S_tot += units.kB * ( - np.log(1-np.exp(-x)) )
 
         # sum each degree of freedom and return the total entropy
         S = S_tot
